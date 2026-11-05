@@ -1,0 +1,693 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum PlayerStatus {
+  ACTIVE
+  BANNED
+  SUSPENDED
+  PLACEMENT
+  INACTIVE
+}
+
+enum MatchStatus {
+  PENDING
+  ACTIVE
+  AWAITING_RESULTS
+  DISPUTED
+  COMPLETED
+  CANCELLED
+  WALKOVER
+}
+
+enum QueueType {
+  SOLO
+  DUO
+  FULL_TEAM
+}
+
+enum QueueStatus {
+  SEARCHING
+  FOUND
+  CANCELLED
+  EXPIRED
+}
+
+enum TeamRole {
+  OWNER
+  CAPTAIN
+  MEMBER
+}
+
+enum ReportType {
+  CHEATING
+  GRIEFING
+  FAKE_RESULT
+  TOXIC_BEHAVIOR
+  SMURFING
+  WIN_TRADING
+  AFK
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum DisputeStatus {
+  OPEN
+  EVIDENCE_REQUESTED
+  UNDER_REVIEW
+  RESOLVED
+  ESCALATED
+}
+
+enum TournamentStatus {
+  REGISTRATION
+  SEEDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TournamentFormat {
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  ROUND_ROBIN
+  SWISS
+}
+
+enum LeagueStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+}
+
+enum SeasonPhase {
+  PLACEMENT
+  REGULAR
+  PLAYOFFS
+  OFFSEASON
+}
+
+enum NotificationType {
+  MATCH_FOUND
+  MATCH_RESULT
+  RANK_CHANGE
+  TEAM_INVITE
+  REPORT_UPDATE
+  SEASON_START
+  SEASON_END
+  TOURNAMENT_MATCH
+  SYSTEM
+}
+
+enum JoinMethod {
+  PRIVATE_SERVER_URL
+  INVITE_CODE
+  FRIEND_REQUEST
+  GAME_LINK
+}
+
+// ─────────────────────────────────────────────
+// PLAYERS
+// ─────────────────────────────────────────────
+
+model Player {
+  id                String        @id @default(uuid())
+  discordId         String        @unique
+  discordUsername   String
+  robloxUsername    String?
+  robloxUserId      String?
+
+  // Rating
+  elo               Int           @default(1000)
+  mmr               Int           @default(1000)
+  level             Int           @default(1)
+  peakElo           Int           @default(1000)
+  peakLevel         Int           @default(1)
+
+  // Placement
+  isPlaced          Boolean       @default(false)
+  placementWins     Int           @default(0)
+  placementLosses   Int           @default(0)
+  placementGamesLeft Int          @default(10)
+
+  // Stats
+  wins              Int           @default(0)
+  losses            Int           @default(0)
+  draws             Int           @default(0)
+  totalMatches      Int           @default(0)
+  winStreak         Int           @default(0)
+  longestWinStreak  Int           @default(0)
+
+  // Anti-abuse
+  recentOpponents   String[]      @default([])
+  suspiciousFlags   Int           @default(0)
+  lastQueueDodge    DateTime?
+  queueDodgeCount   Int           @default(0)
+
+  // Rank Decay
+  lastMatchAt       DateTime?
+  decayWarningAt    DateTime?
+  decayActive       Boolean       @default(false)
+
+  // Account
+  status            PlayerStatus  @default(PLACEMENT)
+  banReason         String?
+  banExpiresAt      DateTime?
+  joinedAt          DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  teamMembers       TeamMember[]
+  matchParticipants MatchParticipant[]
+  queueSessions     QueueSession[]
+  eloHistory        EloHistory[]
+  seasonHistory     SeasonHistory[]
+  reportsSubmitted  Report[]      @relation("ReportSubmitter")
+  reportsReceived   Report[]      @relation("ReportTarget")
+  notifications     Notification[]
+  captainMatchesA   Match[]       @relation("CaptainA")
+  captainMatchesB   Match[]       @relation("CaptainB")
+  tournamentEntries TournamentEntry[]
+
+  @@index([elo])
+  @@index([mmr])
+  @@index([level])
+  @@index([discordId])
+  @@index([status])
+  @@map("players")
+}
+
+// ─────────────────────────────────────────────
+// TEAMS
+// ─────────────────────────────────────────────
+
+model Team {
+  id              String        @id @default(uuid())
+  name            String        @unique
+  tag             String        @unique @db.VarChar(5)
+  description     String?
+  logoUrl         String?
+
+  wins            Int           @default(0)
+  losses          Int           @default(0)
+  teamElo         Int           @default(1000)
+
+  isOpen          Boolean       @default(true)
+  maxMembers      Int           @default(10)
+  region          String        @default("EU")
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  members         TeamMember[]
+  queueSessions   QueueSession[]
+  tournamentEntries TournamentEntry[]
+
+  @@index([teamElo])
+  @@index([name])
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String    @id @default(uuid())
+  teamId    String
+  playerId  String
+  role      TeamRole  @default(MEMBER)
+  joinedAt  DateTime  @default(now())
+
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player    Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, playerId])
+  @@index([teamId])
+  @@index([playerId])
+  @@map("team_members")
+}
+
+model TeamInvite {
+  id              String    @id @default(uuid())
+  teamId          String
+  invitedById     String
+  targetDiscordId String
+  expiresAt       DateTime
+  accepted        Boolean?
+  createdAt       DateTime  @default(now())
+
+  @@index([teamId])
+  @@index([targetDiscordId])
+  @@map("team_invites")
+}
+
+// ─────────────────────────────────────────────
+// QUEUE SESSIONS
+// ─────────────────────────────────────────────
+
+model QueueSession {
+  id               String       @id @default(uuid())
+  type             QueueType
+  status           QueueStatus  @default(SEARCHING)
+
+  creatorId        String
+  teamId           String?
+
+  joinMethod       JoinMethod?
+  privateServerUrl String?
+  inviteCode       String?
+  robloxUsername   String?
+  joinInstructions String?
+  backupContact    String?
+
+  eloMin           Int
+  eloMax           Int
+  averageElo       Int
+  playerIds        String[]
+
+  queuedAt         DateTime     @default(now())
+  matchedAt        DateTime?
+  expiresAt        DateTime
+
+  matchId          String?
+
+  creator          Player       @relation(fields: [creatorId], references: [id])
+  team             Team?        @relation(fields: [teamId], references: [id])
+  match            Match?       @relation(fields: [matchId], references: [id])
+
+  @@index([status])
+  @@index([type])
+  @@index([averageElo])
+  @@map("queue_sessions")
+}
+
+// ─────────────────────────────────────────────
+// MATCHES
+// ─────────────────────────────────────────────
+
+model Match {
+  id                  String       @id @default(uuid())
+  status              MatchStatus  @default(PENDING)
+
+  teamAPlayerIds      String[]
+  teamBPlayerIds      String[]
+  captainAId          String
+  captainBId          String
+
+  joinMethod          JoinMethod?
+  privateServerUrl    String?
+  inviteCode          String?
+  robloxUsername      String?
+  joinInstructions    String?
+  backupContact       String?
+
+  matchChannelId      String?
+  teamAVoiceId        String?
+  teamBVoiceId        String?
+  matchCategoryId     String?
+
+  scoreA              Int?
+  scoreB              Int?
+  submittedByA        Boolean      @default(false)
+  submittedByB        Boolean      @default(false)
+  submittedScoreA     Int?
+  submittedScoreB     Int?
+  winnerId            String?
+
+  eloChangeA          Int?
+  eloChangeB          Int?
+  mmrChangeA          Int?
+  mmrChangeB          Int?
+
+  disputeId           String?
+
+  matchFoundAt        DateTime     @default(now())
+  matchStartedAt      DateTime?
+  matchEndedAt        DateTime?
+  resultSubmittedAt   DateTime?
+  autoResolveAt       DateTime?
+
+  seasonId            String?
+  leagueId            String?
+
+  captainA            Player       @relation("CaptainA", fields: [captainAId], references: [id])
+  captainB            Player       @relation("CaptainB", fields: [captainBId], references: [id])
+  participants        MatchParticipant[]
+  queueSessions       QueueSession[]
+  dispute             Dispute?
+  season              Season?      @relation(fields: [seasonId], references: [id])
+
+  @@index([status])
+  @@index([matchFoundAt])
+  @@index([seasonId])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id        String  @id @default(uuid())
+  matchId   String
+  playerId  String
+  team      String
+  isCaptain Boolean @default(false)
+
+  kills     Int?
+  deaths    Int?
+  assists   Int?
+
+  eloChange Int?
+  mmrChange Int?
+  eloAfter  Int?
+
+  match     Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player    Player  @relation(fields: [playerId], references: [id])
+
+  @@unique([matchId, playerId])
+  @@index([matchId])
+  @@index([playerId])
+  @@map("match_participants")
+}
+
+// ─────────────────────────────────────────────
+// DISPUTES
+// ─────────────────────────────────────────────
+
+model Dispute {
+  id           String        @id @default(uuid())
+  matchId      String        @unique
+  status       DisputeStatus @default(OPEN)
+
+  openedById   String
+  assignedToId String?
+
+  captainAScore Int?
+  captainBScore Int?
+
+  evidence     String[]
+  notes        String?
+  resolution   String?
+
+  openedAt     DateTime      @default(now())
+  resolvedAt   DateTime?
+
+  match        Match         @relation(fields: [matchId], references: [id])
+
+  @@map("disputes")
+}
+
+// ─────────────────────────────────────────────
+// ELO HISTORY
+// ─────────────────────────────────────────────
+
+model EloHistory {
+  id          String   @id @default(uuid())
+  playerId    String
+  matchId     String?
+
+  eloBefore   Int
+  eloAfter    Int
+  eloDelta    Int
+  mmrBefore   Int
+  mmrAfter    Int
+
+  levelBefore Int
+  levelAfter  Int
+
+  reason      String
+  seasonId    String?
+
+  createdAt   DateTime @default(now())
+
+  player      Player   @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+  @@index([createdAt])
+  @@map("elo_history")
+}
+
+// ─────────────────────────────────────────────
+// SEASONS
+// ─────────────────────────────────────────────
+
+model Season {
+  id              String       @id @default(uuid())
+  name            String
+  number          Int          @unique
+  phase           SeasonPhase  @default(PLACEMENT)
+  status          LeagueStatus @default(UPCOMING)
+
+  startAt         DateTime
+  endAt           DateTime
+  playoffStart    DateTime?
+
+  eloResetPercent Int          @default(50)
+
+  createdAt       DateTime     @default(now())
+
+  matches         Match[]
+  history         SeasonHistory[]
+  leagues         League[]
+
+  @@map("seasons")
+}
+
+model SeasonHistory {
+  id         String   @id @default(uuid())
+  playerId   String
+  seasonId   String
+
+  finalElo   Int
+  finalLevel Int
+  finalRank  Int?
+
+  wins       Int
+  losses     Int
+  draws      Int
+
+  rewards    String[]
+
+  player     Player   @relation(fields: [playerId], references: [id])
+  season     Season   @relation(fields: [seasonId], references: [id])
+
+  @@unique([playerId, seasonId])
+  @@map("season_history")
+}
+
+// ─────────────────────────────────────────────
+// LEAGUES
+// ─────────────────────────────────────────────
+
+model League {
+  id       String       @id @default(uuid())
+  seasonId String
+  name     String
+  minElo   Int
+  maxElo   Int
+  color    String
+  icon     String
+
+  season   Season       @relation(fields: [seasonId], references: [id])
+  entries  LeagueEntry[]
+
+  @@map("leagues")
+}
+
+model LeagueEntry {
+  id       String @id @default(uuid())
+  leagueId String
+  playerId String
+
+  points   Int    @default(0)
+  wins     Int    @default(0)
+  losses   Int    @default(0)
+  rank     Int?
+
+  league   League @relation(fields: [leagueId], references: [id])
+
+  @@unique([leagueId, playerId])
+  @@map("league_entries")
+}
+
+// ─────────────────────────────────────────────
+// TOURNAMENTS
+// ─────────────────────────────────────────────
+
+model Tournament {
+  id                    String            @id @default(uuid())
+  name                  String
+  description           String?
+  format                TournamentFormat  @default(SINGLE_ELIMINATION)
+  status                TournamentStatus  @default(REGISTRATION)
+
+  maxEntrants           Int               @default(16)
+  currentEntrants       Int               @default(0)
+  teamSize              Int               @default(5)
+
+  minElo                Int?
+  maxElo                Int?
+
+  prizeDescription      String?
+
+  registrationEnd       DateTime
+  startAt               DateTime
+
+  announcementChannelId String?
+  bracketChannelId      String?
+
+  createdById           String
+  createdAt             DateTime          @default(now())
+
+  entries               TournamentEntry[]
+  rounds                TournamentRound[]
+
+  @@map("tournaments")
+}
+
+model TournamentEntry {
+  id           String     @id @default(uuid())
+  tournamentId String
+  playerId     String?
+  teamId       String?
+
+  seed         Int?
+  eliminated   Boolean    @default(false)
+  finalPlacing Int?
+
+  registeredAt DateTime   @default(now())
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  player       Player?    @relation(fields: [playerId], references: [id])
+  team         Team?      @relation(fields: [teamId], references: [id])
+
+  @@map("tournament_entries")
+}
+
+model TournamentRound {
+  id           String          @id @default(uuid())
+  tournamentId String
+  roundNumber  Int
+  name         String
+
+  tournament   Tournament      @relation(fields: [tournamentId], references: [id])
+  matches      TournamentMatch[]
+
+  @@map("tournament_rounds")
+}
+
+model TournamentMatch {
+  id             String          @id @default(uuid())
+  roundId        String
+
+  entryAId       String?
+  entryBId       String?
+
+  scoreA         Int?
+  scoreB         Int?
+  winnerId       String?
+
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+
+  matchChannelId String?
+
+  round          TournamentRound @relation(fields: [roundId], references: [id])
+
+  @@map("tournament_matches")
+}
+
+// ─────────────────────────────────────────────
+// REPORTS & MODERATION
+// ─────────────────────────────────────────────
+
+model Report {
+  id            String       @id @default(uuid())
+  type          ReportType
+  status        ReportStatus @default(OPEN)
+
+  submittedById String
+  targetId      String
+  matchId       String?
+
+  description   String
+  evidence      String[]
+
+  assignedToId  String?
+  resolution    String?
+
+  submittedAt   DateTime     @default(now())
+  resolvedAt    DateTime?
+
+  submitter     Player       @relation("ReportSubmitter", fields: [submittedById], references: [id])
+  target        Player       @relation("ReportTarget", fields: [targetId], references: [id])
+
+  @@index([status])
+  @@index([targetId])
+  @@map("reports")
+}
+
+model Ban {
+  id          String    @id @default(uuid())
+  playerId    String
+  adminId     String
+  reason      String
+  evidence    String[]
+
+  isPermanent Boolean   @default(false)
+  expiresAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+  liftedAt    DateTime?
+  liftedById  String?
+
+  @@index([playerId])
+  @@map("bans")
+}
+
+// ─────────────────────────────────────────────
+// VOICE ROOMS
+// ─────────────────────────────────────────────
+
+model VoiceRoom {
+  id               String    @id @default(uuid())
+  matchId          String
+  discordChannelId String
+  team             String
+
+  createdAt        DateTime  @default(now())
+  deletedAt        DateTime?
+
+  @@index([matchId])
+  @@map("voice_rooms")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  playerId  String
+  type      NotificationType
+  title     String
+  body      String
+  read      Boolean          @default(false)
+  sentAsDM  Boolean          @default(false)
+
+  createdAt DateTime         @default(now())
+
+  player    Player           @relation(fields: [playerId], references: [id])
+
+  @@index([playerId, read])
+  @@map("notifications")
+}

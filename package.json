@@ -1,0 +1,39 @@
+{
+  "name": "blox-strike-bot",
+  "version": "1.0.0",
+  "description": "Blox Strike Competitive Discord Bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "deploy-commands": "ts-node src/bot/deploy-commands.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node scripts/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "discord.js": "^14.15.3",
+    "ioredis": "^5.3.2",
+    "bullmq": "^5.12.0",
+    "winston": "^3.13.0",
+    "zod": "^3.23.8",
+    "node-cron": "^3.0.3",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/node-cron": "^3.0.11",
+    "prisma": "^5.14.0",
+    "typescript": "^5.5.3",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
